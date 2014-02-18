@@ -11,7 +11,7 @@ import RPi.GPIO as GPIO
 #vavle1time = 400
 #vavle2time = 500
 #Pins used on GPIO 
-pinValve1 = 22
+pinValve1 = 17
 import logging
 logging.basicConfig(filename='/home/pi/light_status.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
 logging.info('matt on cycle starting')
