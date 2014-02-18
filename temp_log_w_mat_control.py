@@ -3,13 +3,18 @@ import sys
 import glob
 import time
 import logging
+import smtplib
 from datetime import datetime
 import RPi.GPIO as GPIO
 #path for log location
 sys.path.append("/home/pi")
 #gpioPin for matt 1
-MattPinValve1 = 22 
-
+MatPinValve1 = 17
+GPIO.cleanup(MatPinValve1)
+GPIO.setwarnings(False)
+#global g_mat_status
+g_mat_status = 'unkown, has not been set'
+g_msg_for_email = 'empty msg'
 os.system('modprobe w1-gpio')
 os.system('modprobe w1-therm')
 
@@ -17,6 +22,7 @@ bedAlarmHiTemp = 92
 bedHiTemp = 85
 bedLowTemp= 75
 bedAlarmLowTemp = 70
+
 base_dir = '/sys/bus/w1/devices/'
 #devices on seedPi 28-000003b6f897- room 28-000005b38e21  28-000005b3e077 
 device_folder = glob.glob(base_dir + '28-000005b3e0*')[0]
@@ -31,6 +37,24 @@ logging.basicConfig(filename='/home/pi/seedtemp.log',level=logging.DEBUG,format=
 
 logging.info('Temp logging starting')
  
+def sendemail(from_addr, to_addr_list, 
+              subject, message,
+              login, password,
+              smtpserver='smtp.gmail.com:587'):
+    header  = 'From: %s\n' % from_addr
+    header += 'To: %s\n' % ','.join(to_addr_list)
+    #header += 'Cc: %s\n' % ','.join(cc_addr_list)
+    header += 'Subject: %s\n\n' % subject
+    message = header + message
+ 
+    server = smtplib.SMTP(smtpserver)
+    server.starttls()
+    server.login(login,password)
+    problems = server.sendmail(from_addr, to_addr_list, message)
+    server.quit()
+
+
+
 def read_temp_raw():
     f = open(device_file, 'r')
     lines = f.readlines()
@@ -83,51 +107,102 @@ def read_temp3():
         temp_c = float(temp_string) / 1000.0
         temp_f = temp_c * 9.0 / 5.0 + 32.0
         return temp_f
+def matPinStatus():
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(MatPinValve1,GPIO.OUT)
+    GPIO.setwarnings(False) #supress warning
+    MatGPIO_Pin_stat = GPIO.input(MatPinValve1)
+    global g_mat_status
+    if MatGPIO_Pin_stat == 0:
+    	msg = 'mat pin reports LOW or ON'
+	#print(msg)
+        g_mat_status = 'on'
+	return msg
+    elif MatGPIO_Pin_stat == 1:
+    	msg = 'mat pin reports HIGH or OFF'
+	g_mat_status = 'off'
+        #print(msg)
+        return msg
+    else:
+    	msg = 'mat pin reporter error'
+        #print(msg)
+        return msg
+ 
 
-def mattControl():
-    matt_staus = 'unset'
+
+def matControl():
+    global g_mat_status
+    global g_msg_for_email 
+    mat_status = g_mat_status 
     #return status
     bedTemp = read_temp2()
-    print 'Seed soil temp1:', bedTemp, bedHiTemp, bedLowTemp
+    msg = 'Mat control main loop pre run........Seed soil temp1: ' + str(bedTemp) + ' Bed Hi Temp: ' + str(bedHiTemp) + ' Bed Low Temp: ' + str(bedLowTemp) + ' Mat Status: ' + mat_status
+    g_msg_for_email = msg
+    print msg 
+    #print bedTemp, bedHiTemp, bedLowTemp
     if bedTemp > bedHiTemp:
-        logging.warning('temp over: %S',bedTemp)
-        logging.info('temp over triggered matt 1 OFF') 
+        #logging.warning('temp over:',bedTemp)
+        logging.info('temp over triggered Mat 1 OFF') 
         #set bed gpio off
-        logging.info('matt 1 stopping now')
-        GPIO.setmode(GPIO.BCM) #numbering scheme that corresponds to breakout board$
-        GPIO.setwarnings(False) #supress warning
-        GPIO.setup(MattPinValve1,GPIO.OUT) #replace pinNum with whatever pin you used, th$ 
-        GPIO.output(MattPinValve1,GPIO.HIGH)
-        logging.info('Matt1 OFF')
-        #future lights below
-        matt_staus = 'off'
-        logging.info('Matt off cycle exiting')
+	if mat_status <> 'off':
+        	logging.info('Mat 1 stopping now')
+        	GPIO.setmode(GPIO.BCM) #numbering scheme that corresponds to breakout board$
+        	GPIO.setwarnings(False) #supress warning
+        	GPIO.setup(MatPinValve1,GPIO.OUT) #replace pinNum with whatever pin you used, th$ 
+        	GPIO.output(MatPinValve1,GPIO.HIGH)
+	
+	logging.info('Mat1 OFF')
+        #future lights below 
+	g_mat_status = 'off'
+	mat_status = 'off'
+	#Mat_LastSet = 'off'
+        logging.info('Mat off cycle exiting')
         #log messages
-        return matt_staus
+        return mat_status
     elif bedTemp < bedLowTemp:
-        logging.warning('temp under: %S',bedTemp)
-        logging.info('temp under triggered matt 1 on')     
-        logging.info('matt 1 starting now')
-        GPIO.setmode(GPIO.BCM) #numbering scheme that corresponds to breakout board$
-        GPIO.setwarnings(False) #supress warning
-        GPIO.setup(MattPinValve1,GPIO.OUT) #replace pinNum with whatever pin you used, th$ 
-        GPIO.output(MattPinValve1,GPIO.LOW)
-        logging.info('Matt1 ON')
+        #logging.warning('temp under:',bedTemp)
+        logging.info('temp under triggered Mat 1 on')     
+        
+	if mat_status <> 'on':
+		logging.info('Mat 1 starting now')
+        	GPIO.setmode(GPIO.BCM) #numbering scheme that corresponds to breakout board$
+        	GPIO.setwarnings(False) #supress warning
+        	GPIO.setup(MatPinValve1,GPIO.OUT) #replace pinNum with whatever pin you used, th$ 
+        	GPIO.output(MatPinValve1,GPIO.LOW)
+        
+	logging.info('Mat1 ON')
         #future lights below
-        matt_staus = 'on'
-        logging.info('Matt on cycle exiting')
-        return matt_staus
+	g_mat_status = 'on'
+        mat_status = 'on'
+        #Mat_LastSet = 'on'
+        logging.info('Mat on cycle exiting')
+        return mat_status
+    else:
+        logging.info('seed temp in range exiting') 
+        #mat_status = mat_status
+	#mat_status = 'unkown'
+	#print(g_mat_status)
+	return mat_status
 while True:
     localtime = time.asctime( time.localtime(time.time()) )
-    print "Local current time :", localtime
-    print "Room"
-    print(read_temp())
+    print "Local current time: ", localtime
+    print "Mat Pin Status: " + matPinStatus()
+    print "Green House: " + str(read_temp())
     logging.info(read_temp())
-    print(read_temp2())	
+    print "Soil Bed: " + str(read_temp2())
     logging.info(read_temp2())
-    
-    print(read_temp3())  
+    print "Room: " + str(read_temp3())  
     logging.info(read_temp3())
-    print(mattControl())
+    print "Mat status"
+    print('Mat:' + matControl())
+    # sendemail(from_addr    = 'xyz@gmail.com', 
+    #       to_addr_list = ['xyz@gmail.com'],
+    #       subject      = 'BedStatus', 
+    #       message      = g_msg_for_email, 
+    #       login        = 'login', 
+    #       password     = 'password')
+    #print(matPinStatus())
     #logging(mattControl())
     time.sleep(60)
+
+
